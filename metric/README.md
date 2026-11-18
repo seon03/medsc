@@ -1,4 +1,4 @@
-# /metric — 통합 평가 파이프라인
+# metric — 통합 평가 파이프라인
 
 RRG(Radiology Report Generation) baseline 하나를 평가할 때, 이 폴더 하나로 6개 metric
 (RadGraph-F1, CheXbert-F1, RadCliQ-v1, RaTEScore, GREEN, RadFact-F1)을 **한 줄 명령어**로
@@ -6,7 +6,7 @@ RRG(Radiology Report Generation) baseline 하나를 평가할 때, 이 폴더 �
 코드는 고칠 필요가 없습니다.
 
 **CRIMSON은 7번째 metric이지만 아직 `run_eval.sh`에 안 묶여있어서 `metric/crimson/`에서
-따로 돌려야 합니다** — 아래 "CRIMSON만 따로 알아둘 것" 참고.
+따로 돌려야 합니다**
 
 ## 0. 최초 1회 환경 설정
 
@@ -17,12 +17,12 @@ RRG(Radiology Report Generation) baseline 하나를 평가할 때, 이 폴더 �
 # 1) 메인 env: radgraph/f1chexbert/radcliq/green 전부 + run_eval.sh 실행
 conda create -n radeval python=3.11 -y
 conda activate radeval
-pip install -e /home/seona/prj-brl/metric/RadEval
+pip install -e ./metric/RadEval
 
 # 2) RaTEScore 전용 env (radeval와 numpy 버전이 충돌해서 분리 — 아래 "왜 env가 3개" 참고)
 conda create -n radeval-rate python=3.11 -y
 conda activate radeval-rate
-pip install -e /home/seona/prj-brl/metric/RadEval
+pip install -e ./metric/RadEval
 pip install "numpy<2.0"
 
 # 3) RadFact-F1 전용 env (vLLM이 자기 torch/CUDA 빌드를 요구해서 분리)
@@ -78,7 +78,7 @@ cd /home/seona/prj-brl/metric
 레코드에 `radeval_scores` 필드로 합쳐집니다.
 
 여러 baseline을 돌린 뒤 한 표로 비교하려면 `python3 collect_results.py`
-(→ `/home/seona/prj-brl/results/RRG_RESULTS.md` 생성/갱신, `ROW_TO_RUN_DIR`에 run_dir
+(→ `./results/RRG_RESULTS.md` 생성/갱신, `ROW_TO_RUN_DIR`에 run_dir
 한 줄만 등록하면 됨).
 
 ## RadFact-F1만 따로 알아둘 것
@@ -207,5 +207,4 @@ metric/
 ## 데이터셋 위치
 
 MIMIC-CXR/IU X-Ray 실제 데이터(이미지+annotation.json)는
-`/mnt/.cache/huggingface/datasets/{mimic-cxr,iu_xray}/`에 있습니다 (팀 공유 캐시 —
-`/home/seona/prj-brl/dataset/`에는 다운로드 스크립트/로그만 남아있고 실제 데이터는 없음).
+`/mnt/.cache/huggingface/datasets/{mimic-cxr,iu_xray}/`에 있습니다
