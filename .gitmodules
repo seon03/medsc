@@ -1,0 +1,6 @@
+[submodule "metric/CRIMSON"]
+	path = metric/CRIMSON
+	url = https://github.com/rajpurkarlab/CRIMSON.git
+[submodule "metric/radfact/RadFact"]
+	path = metric/radfact/RadFact
+	url = https://github.com/microsoft/RadFact.git

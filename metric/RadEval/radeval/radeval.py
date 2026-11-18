@@ -1,0 +1,176 @@
+import json
+import os
+import warnings
+import logging
+
+
+def _normalize_metrics(metrics):
+    """Normalize metrics argument to dict[str, dict].
+
+    Accepts:
+        - list of strings:  ["bleu", "rouge"]
+        - dict:             {"bleu": {}, "crimson": {"provider": "openai"}}
+        - YAML-style list:  ["bleu", {"crimson": {"provider": "openai"}}]
+        - None:             returns {}
+    """
+    if metrics is None:
+        return {}
+    if isinstance(metrics, dict):
+        return metrics
+    if isinstance(metrics, list):
+        result = {}
+        for item in metrics:
+            if isinstance(item, str):
+                result[item] = {}
+            elif isinstance(item, dict):
+                for name, opts in item.items():
+                    result[name] = opts if isinstance(opts, dict) else {}
+            else:
+                raise TypeError(
+                    f"metrics list items must be str or dict, got {type(item)}")
+        return result
+    raise TypeError(
+        f"metrics must be a list or dict, got {type(metrics)}")
+
+
+class RadEval:
+    def __init__(self,
+                 metrics=None,
+                 openai_api_key=None,
+                 gemini_api_key=None,
+                 per_sample=False,
+                 detailed=False,
+                 show_progress=True,
+                 cache_dir=None):
+        """
+        Args:
+            metrics: which metrics to run. accepts:
+                - a list of names:  ["bleu", "rouge", "bertscore"]
+                - a dict with per-metric config:
+                  {"crimson": {"provider": "openai"}, "bleu": {}}
+                - or use RadEval.from_config("config.yaml")
+            openai_api_key: shared key for LLM metrics (CRIMSON, RadFact-CT, MammoGREEN)
+            gemini_api_key: shared key for Gemini-backed metrics
+            per_sample: return list[float] per metric instead of aggregate
+            detailed: return extra keys (label breakdowns, std, etc.)
+            show_progress: show Rich progress bars
+            cache_dir: shared cache dir for model downloads
+        """
+        from .metrics._registry import get_metric_class
+
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        warnings.filterwarnings("ignore")
+        logging.getLogger("RadEval").setLevel(logging.ERROR)
+
+        self.per_sample = per_sample
+        self.detailed = detailed
+        self.show_progress = show_progress
+
+        self._active_metrics = []
+        self.metric_keys = []
+
+        for name, opts in _normalize_metrics(metrics).items():
+            kwargs = dict(opts)
+
+            cls = get_metric_class(name)
+            if getattr(cls, 'is_api_based', False):
+                if openai_api_key:
+                    kwargs.setdefault("openai_api_key", openai_api_key)
+                if gemini_api_key:
+                    kwargs.setdefault("gemini_api_key", gemini_api_key)
+                if cache_dir:
+                    kwargs.setdefault("cache_dir", cache_dir)
+
+            metric = cls(**kwargs)
+            self._active_metrics.append(metric)
+            # Expose the underlying scorer (adapter._scorer for most metrics)
+            # as `<name>_scorer` for tests that monkey-patch e.g. async clients.
+            underlying = getattr(metric, "_scorer", metric)
+            setattr(self, f"{name}_scorer", underlying)
+            self.metric_keys.extend(metric.metric_keys(detailed=detailed))
+
+    def __call__(self, refs, hyps):
+        if not (isinstance(hyps, list) and isinstance(refs, list)):
+            raise TypeError("hyps and refs must be of type list")
+        if len(hyps) != len(refs):
+            raise ValueError("hyps and refs lists don't have the same size")
+        if len(refs) == 0:
+            return {}
+        return self.compute_scores(refs=refs, hyps=hyps)
+
+    def _make_progress(self):
+        from rich.progress import (
+            Progress, SpinnerColumn, TextColumn, BarColumn,
+            MofNCompleteColumn, TimeElapsedColumn,
+        )
+        return Progress(
+            SpinnerColumn(), TextColumn("[bold]{task.description}"),
+            BarColumn(), MofNCompleteColumn(), TimeElapsedColumn(),
+            disable=not self.show_progress,
+        )
+
+    def compute_scores(self, refs, hyps):
+        """Run each metric sequentially, merge results."""
+        scores = {}
+        n = len(refs)
+
+        with self._make_progress() as progress:
+            metric_task = progress.add_task("Starting...",
+                                            total=len(self._active_metrics))
+            for metric in self._active_metrics:
+                progress.update(metric_task,
+                                description=f"Computing {metric.display_name}")
+
+                sub_task = progress.add_task(
+                    f"  [dim]{metric.display_name}",
+                    total=metric.progress_total(n))
+
+                result = metric.compute(
+                    refs, hyps,
+                    per_sample=self.per_sample,
+                    detailed=self.detailed,
+                    on_progress=lambda _st=sub_task: progress.advance(_st),
+                )
+
+                progress.update(sub_task, completed=metric.progress_total(n))
+                progress.remove_task(sub_task)
+                scores.update(result)
+                progress.advance(metric_task)
+
+        return scores
+
+    @classmethod
+    def from_config(cls, path):
+        """Load from a YAML or JSON config file.
+
+        Example config.yaml:
+            metrics:
+              - bleu
+              - rouge
+              - crimson:
+                  provider: openai
+
+            output:
+              mode: default  # or "per_sample" or "detailed"
+        """
+        import yaml
+        from pathlib import Path
+        raw = Path(path).read_text()
+        config = json.loads(raw) if path.endswith(".json") else yaml.safe_load(raw)
+        return cls(
+            metrics=config.get("metrics", []),
+            per_sample=config.get("output", {}).get("mode") == "per_sample",
+            detailed=config.get("output", {}).get("mode") == "detailed",
+        )
+
+
+def main():
+    evaluator = RadEval(metrics=["bleu", "rouge"])
+    refs = ["No acute cardiopulmonary process."]
+    hyps = ["No acute cardiopulmonary process."]
+    results = evaluator(refs=refs, hyps=hyps)
+    print(json.dumps(results, indent=4))
+
+
+if __name__ == "__main__":
+    main()
